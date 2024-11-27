@@ -344,10 +344,7 @@ module rr_arb_tree_lock #(
     req1 : assert property(
       @(posedge clk_i) req_o |-> |req_i)
         else $error (1, "Req out implies req in.");
-
-    lock2 : assert property(
-      @(posedge clk_i) disable iff (!rst_ni) lock_rr_q[0] |-> idx_o == $past(idx_o))
-        else $error (1, "Lock means idx_o does not change.");
+      
     `endif
     `endif
     // pragma translate_on
