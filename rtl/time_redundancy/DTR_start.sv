@@ -95,8 +95,6 @@ module DTR_start # (
             assign next_id_ov[r][IDSize-2:0] = id_q[r][IDSize-2:0] + 1;
             assign next_id_ov[r][IDSize-1] = ^next_id_ov[r][IDSize-2:0];
         end
-
-        assign dtr_interface.id[r] = next_id_ov[r];
     end
 
     if (EarlyReadyEnable) begin : gen_store_fsm
@@ -177,19 +175,21 @@ module DTR_start # (
                     STORE_AND_SEND: begin
                         valid_ov[r] = valid_i;
                         ready_ov[r] = 1;
-                        dtr_interface.sent[r] = 1;
+                        dtr_interface.sent[r] = valid_i & ready_i & enable_i;
                     end
                     SEND: begin
                         valid_ov[r] = '1;
                         ready_ov[r] = '0;
-                        dtr_interface.sent[r] = 0;
+                        dtr_interface.sent[r] = ready_i & enable_i;
                     end
                     REPLICATE: begin
                         valid_ov[r] = '1;
                         ready_ov[r] = '0;
-                        dtr_interface.sent[r] = 1;
+                        dtr_interface.sent[r] = '0;
                     end
                 endcase
+
+                dtr_interface.id  [r] = id_d[r];
             end
         end
 
@@ -268,17 +268,19 @@ module DTR_start # (
                 case (state_q[r])
                     SEND: begin
                         ready_ov[r] = ~enable_i & ready_i;
-                        dtr_interface.sent[r] = valid_i & enable_i;
+                        dtr_interface.sent[r] = valid_i & enable_i & ready_i;
                     end
                     SEND_NO_INCREMENT: begin
                         ready_ov[r] = ~enable_i & ready_i;
-                        dtr_interface.sent[r] = 0;
+                        dtr_interface.sent[r] = enable_i & ready_i;
                     end
                     SEND_AND_CONSUME: begin
                         ready_ov[r] = enable_i & ready_i;
-                        dtr_interface.sent[r] = 0;
+                        dtr_interface.sent[r] = '0;
                     end
                 endcase
+
+                dtr_interface.id  [r] = id_d[r];
             end
         end
 

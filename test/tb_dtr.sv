@@ -23,7 +23,7 @@ module tb_dtr #(
     data_t data_in, data_redundant,  data_fault,  data_redundant_faulty,  data_out;
     logic valid_redundant, valid_fault, valid_redundant_faulty;
     logic ready_redundant, ready_fault, ready_redundant_faulty;
-    logic [IDSize-1:0] id_redundant, id_fault, id_redundant_faulty, id_next;
+    logic [IDSize-1:0] id_redundant, id_fault, id_redundant_faulty;
 
     // Forward connection
     DTR_interface #(

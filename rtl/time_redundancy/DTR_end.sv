@@ -288,9 +288,14 @@ module DTR_end # (
     // Split ID signal into parts
     logic id_q_fault;
     logic [IDSize-2:0] id_q_noparity;
+    logic [REP-1:0][IDSize-2:0] interface_id_noparity;
 
     assign id_q_fault = ^id_q;
     assign id_q_noparity = id_q[IDSize-2:0];
+
+    for (genvar r = 0; r < REP; r++) begin: gen_interface_id_noparity
+        assign interface_id_noparity[r] = dtr_interface.id[r][IDSize-2:0];
+    end
 
     logic [REP-1:0][2 ** (IDSize-1)-1:0] recently_seen_b, recently_seen_v, recently_seen_d, recently_seen_q;
 
@@ -299,7 +304,7 @@ module DTR_end # (
             recently_seen_v[r] = recently_seen_q[r];
 
             if (dtr_interface.sent[r]) begin
-                recently_seen_v[r][dtr_interface.id[r][IDSize-2:0]] = 0;
+                recently_seen_v[r][interface_id_noparity[r]] = 0;
             end
 
             if (valid_internal_v[r] & ready_i & !id_q_fault) begin
@@ -322,7 +327,15 @@ module DTR_end # (
     for (genvar r = 0; r < REP; r++) begin: gen_deduplication_output
         always_comb begin: gen_deduplication_output_comb
             if (enable_i) begin
-                if (id_q_fault | recently_seen_q[r][id_q_noparity] & valid_internal_v[r]) begin
+                // If parity is no good we never send out anything (wait for 2nd element)
+                if (id_q_fault) begin
+                    valid_ov[r] = 0;
+                // If we have an match from the interface directly we can send output
+                end else if (dtr_interface.sent[r] && id_q_noparity == interface_id_noparity[r]) begin
+                    valid_ov[r] = valid_internal_v[r];
+                // Otherwise check if we have recently seen this id
+                // - if we did do not send output again as it would be duplicate
+                end else if (recently_seen_q[r][id_q_noparity]) begin
                     valid_ov[r] = 0;
                 end else begin
                     valid_ov[r] = valid_internal_v[r];
