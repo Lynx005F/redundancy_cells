@@ -66,42 +66,38 @@ module retry_start # (
 
     //////////////////////////////////////////////////////////////////////
     // Register to store failed id for one cycle
-    logic [IDSize-1:0] failed_id_d, failed_id_q;
-    logic failed_valid_d, failed_valid_q;
+    logic [IDSize-1:0] failed_id_q;
+    logic retry_valid_q;
+    logic retry_ready, internal_ready;
+    logic retry_reg_ena;
 
-    always_comb begin: gen_next_cycle_decision
-        if (ready_i | retry.valid) begin
-            failed_valid_d = retry.valid;
-        end else begin
-            failed_valid_d = failed_valid_q;
-        end
+    // Internal register enable for this stage
+    // Upstream ready is only defined by the current register (otherwise there would be a ready loop)
+    // But internal pipereg is determined also by downstream ready
+    assign retry.ready = ~retry_valid_q;
+    assign internal_ready = (~retry_valid_q | retry_ready);
+    assign retry_reg_ena = retry.valid & internal_ready;
 
-        if (retry.valid & retry.ready) begin
-            failed_id_d = retry.id;
-        end else begin
-            failed_id_d = failed_id_q;
-        end
-    end
-
-    `FF(failed_id_q, failed_id_d, '0);
-    `FF(failed_valid_q, failed_valid_d, '0);
-
-    assign retry.ready = ready_i | ~failed_valid_q;
+    `FFL(retry_valid_q, retry.valid, internal_ready, '0); // Valid signal only depends on ready as standard
+    `FFL(  failed_id_q, retry.id,    retry_reg_ena, '0);
 
     //////////////////////////////////////////////////////////////////////
-    // ID Counter
+    // ID Counter, triggers on all outputs
 
     logic [IDSize-1:0] counter_id_d, counter_id_q;
+    logic out_reg_ena;
+
+    assign out_reg_ena = valid_o & ready_i;
 
     always_comb begin: gen_id_counter
-        if ((failed_valid_q | valid_i) & ready_i) begin
+        if (out_reg_ena) begin
 
             // The topmost ID bits are not incremented but are controlled externally if 
-            // required to split the storage area into sections. In this case get if fron external
+            // required to split the storage area into sections. In this case get it from external
             // or take it from the element to retry.
             counter_id_d[NormalIDSize-1:0] = counter_id_q[NormalIDSize-1:0] + 1;
             if (ExternalIDBits > 0) begin
-                if (failed_valid_q) begin
+                if (retry_valid_q) begin
                     counter_id_d[IDSize-1: NormalIDSize] = failed_id_q[IDSize-1: NormalIDSize];
                 end else begin
                     counter_id_d[IDSize-1: NormalIDSize] = ext_id_bits_i[ExternalIDBits-1 :0];
@@ -115,8 +111,10 @@ module retry_start # (
 
     `FF(counter_id_q, counter_id_d, 0);
 
+    assign id_o = counter_id_q;
+
     //////////////////////////////////////////////////////////////////////
-    // General Element storage
+    // General Element storage, stores all outputs
 
     logic [2 ** IDSize -1:0][$bits(DataType)-1:0] data_storage_d, data_storage_q;
 
@@ -124,25 +122,35 @@ module retry_start # (
         // Keep data as is as abase
         data_storage_d = data_storage_q;
 
-        if ((failed_valid_q | valid_i) & ready_i) begin
+        if (out_reg_ena) begin
             data_storage_d[counter_id_q] = data_o;
         end
     end
 
     `FF(data_storage_q, data_storage_d, 0);
 
-    always_comb begin: gen_output
-        if (failed_valid_q & ready_i) begin
+    //////////////////////////////////////////////////////////////////////
+    // Switch between retry and non-retry output
+
+    logic retry_switch;
+
+    // We need another FF here so we surely store if we need to switch
+    // until the previous data is gone - which is different from storing
+    // the retry element.
+    `FFL(retry_switch, retry.valid, out_reg_ena, 0);
+
+    always_comb begin
+        if (retry_switch) begin
+            ready_o = '0;
+            valid_o = '1;
+            retry_ready = ready_i;
             data_o = data_storage_q[failed_id_q];
         end else begin
+            ready_o = ready_i;
+            retry_ready = '0;
+            valid_o = valid_i;
             data_o = data_i;
         end
-        id_o = counter_id_q;
     end
-
-    //////////////////////////////////////////////////////////////////////
-    // Handshake assignment
-    assign ready_o = ready_i & !failed_valid_q;
-    assign valid_o = valid_i | failed_valid_q;
 
 endmodule
