@@ -1,6 +1,6 @@
 module tb_dtr_retry #(
     // DUT Parameters
-    parameter int IDSize = 4,
+    parameter int IDSize = 5,
     parameter int LockTimeout = 4 * 12,
     parameter bit InternalRedundancy = 0,
     parameter bit EarlyReadyEnable = 0,
@@ -33,7 +33,7 @@ module tb_dtr_retry #(
     logic valid_detectable, valid_redundant, valid_fault, valid_redundant_faulty, valid_detected;
     logic ready_detectable, ready_redundant, ready_fault, ready_redundant_faulty, ready_detected;
     logic [IDSize-1:0] id_redundant, id_fault, id_redundant_faulty;
-    logic [IDSize-2:0] id_detectable, id_detected;
+    logic [IDSize-3:0] id_detectable, id_detected;
     logic needs_retry_detected;
 
     // Forward connection
@@ -44,13 +44,13 @@ module tb_dtr_retry #(
 
     // Feedback connection
     retry_interface #(
-        .IDSize(IDSize-1)
+        .IDSize(IDSize-2)
     ) retry_connection ();
 
     // DUT Instances
     retry_start #(
         .DataType(tagged_data_t),
-        .IDSize(IDSize-1)
+        .IDSize(IDSize-2)
     ) dut_retry_start (
         .clk_i(clk),
         .rst_ni(rst_n),
@@ -131,7 +131,7 @@ module tb_dtr_retry #(
     // DUT Instances
     retry_end #(
         .DataType(tagged_data_t),
-        .IDSize(IDSize-1)
+        .IDSize(IDSize-2)
     ) dut_retry_end (
         .clk_i(clk),
         .rst_ni(rst_n),

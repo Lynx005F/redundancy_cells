@@ -5,7 +5,7 @@ module tb_dtr_retry_lock #(
     parameter int LockTimeout = 5 * 12,
     parameter int NumOpgroups = 3,
     parameter int OpgroupWidth = $clog2(NumOpgroups),
-    parameter int IDSize = 9,
+    parameter int IDSize = 10,
     parameter [NumOpgroups-1:0][7:0] OpgroupNumRegs = {8'd4, 8'd3, 8'd3},
     parameter bit EarlyReadyEnable = 0,
     parameter bit InternalRedundancy = 0,
@@ -28,7 +28,7 @@ module tb_dtr_retry_lock #(
     typedef logic              [7:0] data_t;
     typedef logic [OpgroupWidth-1:0] operation_t;
     typedef logic       [IDSize-1:0] id_parity_t;
-    typedef logic       [IDSize-2:0] id_t;
+    typedef logic       [IDSize-3:0] id_t;
     typedef logic [7:0] tag_t;
 
     typedef struct packed {
@@ -71,7 +71,7 @@ module tb_dtr_retry_lock #(
 
     // Feedback connection
     retry_interface #(
-        .IDSize(IDSize-1)
+        .IDSize(IDSize-2)
     ) retry_connection ();
 
     // Connection between retry and DMR
@@ -88,7 +88,7 @@ module tb_dtr_retry_lock #(
     // DUT Instances
     retry_start #(
         .DataType(tmr_stacked_t),
-        .IDSize(IDSize-1)
+        .IDSize(IDSize-2)
     ) i_retry_start (
         .clk_i(clk),
         .rst_ni(rst_n),
@@ -266,7 +266,7 @@ module tb_dtr_retry_lock #(
 
     retry_end #(
         .DataType(tmr_stacked_t),
-        .IDSize(IDSize-1)
+        .IDSize(IDSize-2)
     ) i_retry_end (
         .clk_i(clk),
         .rst_ni(rst_n),

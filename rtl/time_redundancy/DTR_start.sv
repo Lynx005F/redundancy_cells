@@ -43,9 +43,9 @@ module DTR_start # (
     // For an out of order process, it needs to be big enough so that the
     // out-of-orderness can never  rearange the elements with the same id
     // next to each other and needs an extra bit for error detection.
-    // As an estimate you can use log2(longest_pipeline) + 2.
+    // As an estimate you can use log2(longest_pipeline) + 3.
     // Needs to match with DTR_end!
-    parameter int unsigned IDSize = 1,
+    parameter int unsigned IDSize = 3,
     // If you want Ready to be set as early as possible, and store elements
     // internally in redundant mode. Increases area but potentially stops
     // upstream stalls.
@@ -70,7 +70,7 @@ module DTR_start # (
 
     // Upstream connection
     input DataType data_i,
-    input logic [IDSize-2:0] id_i,
+    input logic [IDSize-3:0] id_i,
     input logic valid_i,
     output logic ready_o,
 
@@ -81,27 +81,26 @@ module DTR_start # (
     input logic ready_i
 );
 
+    // Reverse Signals
+    logic [REP-1:0] ready_ov;
+    `VOTEX1(REP, ready_ov, ready_o);
+
     // ID Generation Logic
-    logic [REP-1:0][IDSize-1:0] next_id_ov;
-    logic [REP-1:0][IDSize-1:0] id_b, id_v, id_d, id_q;
+    logic [REP-1:0][IDSize-3:0] next_id_ov;
+    logic [REP-1:0][IDSize-3:0] id_b, id_v, id_d, id_q;
+    logic [REP-1:0] id_stage;
 
     for (genvar r = 0; r < REP; r++) begin: gen_id
         if (UseExternalId == 1) begin
-            // Add a parity bit
-            assign next_id_ov[r][IDSize-2:0] = id_i;
-            assign next_id_ov[r][IDSize-1] = ^id_i;
+            assign next_id_ov[r] = id_i;
         end else begin
-            // Increment and add parity bit
-            assign next_id_ov[r][IDSize-2:0] = id_q[r][IDSize-2:0] + 1;
-            assign next_id_ov[r][IDSize-1] = ^next_id_ov[r][IDSize-2:0];
+            // Just increment ID
+            assign next_id_ov[r] = id_q[r] + 1;
         end
     end
 
-    if (EarlyReadyEnable) begin : gen_store_fsm
-        // Redundant Output signals
-        logic [REP-1:0] ready_ov;
-        logic [REP-1:0] valid_ov;
 
+    if (EarlyReadyEnable) begin : gen_store_fsm
         // State machine TLDR
         // - counting the state from 0 to 2 if the handshake is good
         // - counting the ID up whenever the state goes back to 0
@@ -110,6 +109,7 @@ module DTR_start # (
         typedef enum logic [1:0] {STORE_AND_SEND, SEND, REPLICATE} state_t;
         state_t [REP-1:0] state_b, state_v, state_d, state_q;
         DataType [REP-1:0] data_b, data_v, data_d, data_q;
+        logic [REP-1:0] valid_ov;
 
         for (genvar r = 0; r < REP; r++) begin: gen_next_state
 
@@ -175,35 +175,31 @@ module DTR_start # (
                     STORE_AND_SEND: begin
                         valid_ov[r] = valid_i;
                         ready_ov[r] = 1;
-                        dtr_interface.sent[r] = valid_i & ready_i & enable_i;
+                        id_stage[r] = 0;
                     end
                     SEND: begin
                         valid_ov[r] = '1;
                         ready_ov[r] = '0;
-                        dtr_interface.sent[r] = ready_i & enable_i;
+                        id_stage[r] = 0;
                     end
                     REPLICATE: begin
                         valid_ov[r] = '1;
                         ready_ov[r] = '0;
-                        dtr_interface.sent[r] = '0;
+                        id_stage[r] = 1;
                     end
                 endcase
-
-                dtr_interface.id  [r] = id_d[r];
             end
         end
 
         // Output Voting Logic
-        assign data_o = data_d[0];
-        assign id_o = id_d[0];
-
-        `VOTEX1(REP, ready_ov, ready_o);
+        assign data_o = data_d[0]; // No Voting required because errors do not feed state
         `VOTEX1(REP, valid_ov, valid_o);
 
-    end else begin: gen_no_store_fsm
-        // Redundant Output signals
-        logic [REP-1:0] ready_ov;
+        for (genvar r = 0; r < REP; r++) begin: gen_intf_sent
+            assign dtr_interface.sent[r] = enable_i & valid_ov[r] & ready_i;
+        end
 
+    end else begin: gen_no_store_fsm
         // State machine TLDR
         // - Wait for valid and count number of ready cycles after valid is sent
 
@@ -268,28 +264,42 @@ module DTR_start # (
                 case (state_q[r])
                     SEND: begin
                         ready_ov[r] = ~enable_i & ready_i;
-                        dtr_interface.sent[r] = valid_i & enable_i & ready_i;
+                        id_stage[r] = 0;
                     end
                     SEND_NO_INCREMENT: begin
                         ready_ov[r] = ~enable_i & ready_i;
-                        dtr_interface.sent[r] = enable_i & ready_i;
+                        id_stage[r] = 0;
                     end
                     SEND_AND_CONSUME: begin
                         ready_ov[r] = enable_i & ready_i;
-                        dtr_interface.sent[r] = '0;
+                        id_stage[r] = 1;
                     end
                 endcase
-
-                dtr_interface.id  [r] = id_d[r];
             end
         end
 
         // Output Voting Logic
-        assign data_o = data_i;
-        assign valid_o = valid_i;
-        assign id_o = id_d[0];
+        assign data_o = data_i; // We don't have redundancy since straight through
+        assign valid_o = valid_i; // We don't have redundancy since straight through
 
-        `VOTEX1(REP, ready_ov, ready_o);
+        for (genvar r = 0; r < REP; r++) begin: gen_intf_sent
+            assign dtr_interface.sent[r] = enable_i & valid_o & ready_i;
+        end
 
     end
+
+    // Build output ID and DTR Interface
+    //  - Add stage bit
+    //  - Add parity bit
+    logic [REP-1:0][IDSize-1:0] id_ov;
+
+    for (genvar r = 0; r < REP; r++) begin: gen_id_output
+        assign id_ov[r][IDSize-2:0] = {id_stage[r], id_d[r]};
+        assign id_ov[r][IDSize-1] = ^id_ov[r][IDSize-2:0];
+
+        assign dtr_interface.id[r] = id_ov[r];
+    end
+
+    assign id_o = id_ov[0]; // No Voting required because errors do not feed state
+
 endmodule
