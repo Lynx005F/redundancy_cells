@@ -87,7 +87,7 @@ module retry_start # (
     assign out_tx = retry.valid & retry.is_ready;
 
     logic [2 ** UsableIDSize -1:0] in_use_d, in_use_q;
-    logic valid_for_retry;
+    logic retry_valid;
     logic in_use_now;
 
     always_comb begin: gen_deduplication_next_state_comb
@@ -110,7 +110,7 @@ module retry_start # (
 
     assign in_use_now =  out_reg_ena && (id_o[UsableIDSize-1:0] == id_noparity);
 
-    assign valid_for_retry = out_tx & id_parity_valid & retry.needs_retry & (in_use_q[id_noparity] | in_use_now);
+    assign retry_valid = out_tx & id_parity_valid & retry.needs_retry & (in_use_q[id_noparity] | in_use_now);
 
     //////////////////////////////////////////////////////////////////////
     // Register to store for one more cycle so there are no loops
@@ -125,9 +125,9 @@ module retry_start # (
     // But internal pipereg is determined also by downstream ready
 
     assign internal_ready = (~retry_valid_q | retry_ready);
-    assign retry_reg_ena = valid_for_retry & internal_ready;
+    assign retry_reg_ena = retry_valid & internal_ready;
 
-    `FFL(retry_valid_q, valid_for_retry, internal_ready, '0);
+    `FFL(retry_valid_q, retry_valid, internal_ready, '0);
     `FFL(  failed_id_q, retry.id,        retry_reg_ena, '0);
 
     //////////////////////////////////////////////////////////////////////
@@ -145,7 +145,7 @@ module retry_start # (
 
             // Add External Bits
             if (ExternalIDBits > 0) begin
-                if (valid_for_retry) begin
+                if (retry_valid) begin
                     counter_id_d[UsableIDSize-1: NormalIDSize] = retry.id[UsableIDSize-1: NormalIDSize];
                 end else begin
                     counter_id_d[UsableIDSize-1: NormalIDSize] = ext_id_bits_i[ExternalIDBits-1 :0];
@@ -189,7 +189,7 @@ module retry_start # (
     // until the previous data is gone - which is different from storing
     // the retry element.
 
-    `FFL(retry_switch, retry_valid_q & !retry_ready, valid_o & ready_i, 0);
+    `FFL(retry_switch, (retry_valid | retry_valid_q) & !retry_ready, valid_o & ready_i, 0);
 
     always_comb begin
         if (retry_switch) begin
