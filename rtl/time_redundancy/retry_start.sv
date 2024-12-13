@@ -113,22 +113,60 @@ module retry_start # (
     assign retry_valid = out_tx & id_parity_valid & retry.needs_retry & (in_use_q[id_noparity] | in_use_now);
 
     //////////////////////////////////////////////////////////////////////
-    // Register to store for one more cycle so there are no loops
+    // Registers to store for one more cycle so there are no loops
 
-    logic [IDSize-1:0] failed_id_q;
-    logic retry_valid_q;
-    logic retry_ready, internal_ready;
-    logic retry_reg_ena;
+    logic [IDSize-1:0] failed_id_q, failed_id_immediate;
+    logic retry_valid_q, retry_valid_immediate;
+    logic mid_ready, upstream_ready;
+    logic reg_ena;
 
     // Internal register enable for this stage
     // Upstream ready is only defined by the current register (otherwise there would be a ready loop)
     // But internal pipereg is determined also by downstream ready
 
-    assign internal_ready = (~retry_valid_q | retry_ready);
-    assign retry_reg_ena = retry_valid & internal_ready;
+    assign upstream_ready = (~retry_valid_q | mid_ready);  // Register is ready if empty or downstream ready
+    assign reg_ena = retry_valid & upstream_ready;
 
-    `FFL(retry_valid_q, retry_valid, internal_ready, '0);
-    `FFL(  failed_id_q, retry.id,        retry_reg_ena, '0);
+    `FFL(retry_valid_q, retry_valid & !mid_ready, upstream_ready, '0);
+    `FFL(  failed_id_q, retry.id,        reg_ena, '0);
+
+    assign failed_id_immediate = retry_valid_q ? failed_id_q : retry.id; // Use data in reg if valid
+    assign retry_valid_immediate = retry_valid | retry_valid_q;
+
+    //////////////////////////////////////////////////////////////////////
+    // Second Register
+    // (this is only used in the rare case that we have two retries close together
+    //  we can not stall upstream since this would cause a cycle and terminal stall.
+    //  Instead we just hang on to one more id)
+
+    logic [IDSize-1:0] failed_id_q2, failed_id_immediate2;
+    logic retry_valid_q2, retry_valid_immediate2;
+    logic retry_ready;
+    logic reg_ena2;
+    
+    assign mid_ready = (~retry_valid_q2 | retry_ready); // Register is ready if empty or downstream ready
+    assign reg_ena2 = retry_valid_immediate & mid_ready;
+
+    `FFL(retry_valid_q2, retry_valid_immediate, mid_ready, '0);
+    `FFL(  failed_id_q2, failed_id_immediate,   reg_ena2, '0);
+
+    assign failed_id_immediate2 = retry_valid_q2 ? failed_id_q2 : failed_id_immediate; // Use data in reg if valid
+    assign retry_valid_immediate2 = retry_valid_immediate | retry_valid_q2;
+
+    //////////////////////////////////////////////////////////////////////
+    // Register to store what we do for next input
+    // (So stability is guaranteed) 
+
+    // We need another FF here so we surely store if we need to switch
+    // until the previous data is gone - which is different from storing
+    // the retry element.
+    logic retry_switch;
+
+    `FFL(retry_switch, retry_valid_immediate2 & !retry_ready, out_reg_ena, 0);
+
+    // Signal to pre-switch thing before reg_enable
+    logic retry_imminent;
+    assign retry_imminent = retry_valid_immediate2 & !retry_switch; 
 
     //////////////////////////////////////////////////////////////////////
     // ID Counter, triggers on all outputs
@@ -145,8 +183,8 @@ module retry_start # (
 
             // Add External Bits
             if (ExternalIDBits > 0) begin
-                if (retry_valid) begin
-                    counter_id_d[UsableIDSize-1: NormalIDSize] = retry.id[UsableIDSize-1: NormalIDSize];
+                if (retry_imminent) begin
+                    counter_id_d[UsableIDSize-1: NormalIDSize] = failed_id_immediate2[UsableIDSize-1: NormalIDSize];
                 end else begin
                     counter_id_d[UsableIDSize-1: NormalIDSize] = ext_id_bits_i[ExternalIDBits-1 :0];
                 end
@@ -183,20 +221,12 @@ module retry_start # (
     //////////////////////////////////////////////////////////////////////
     // Handshake injection
 
-    logic retry_switch;
-
-    // We need another FF here so we surely store if we need to switch
-    // until the previous data is gone - which is different from storing
-    // the retry element.
-
-    `FFL(retry_switch, (retry_valid | retry_valid_q) & !retry_ready, valid_o & ready_i, 0);
-
     always_comb begin
         if (retry_switch) begin
             ready_o = '0;
             valid_o = '1;
             retry_ready = ready_i;
-            data_o = data_storage_q[failed_id_q[UsableIDSize-1:0]];
+            data_o = data_storage_q[failed_id_q2[UsableIDSize-1:0]];
         end else begin
             ready_o = ready_i;
             retry_ready = '0;
