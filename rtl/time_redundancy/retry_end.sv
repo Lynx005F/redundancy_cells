@@ -45,22 +45,21 @@ module retry_end # (
     // Retry Connection
     retry_interface.ende retry
 );
-
-    // Assign signals
+    
+    // Assign signals to retry interface
     assign retry.id = id_i;
+    assign retry.valid = valid_i;
+    assign retry.is_ready = ready_o;
+    assign retry.needs_retry = needs_retry_i;
+
+    // No data modification ever, just handshake stuff
     assign data_o = data_i;
 
-    always_comb begin: gen_output
-        if (needs_retry_i) begin
-            retry.valid = valid_i;
-            ready_o = retry.ready;
-            valid_o = 0;
-        end else begin
-            valid_o = valid_i;
-            ready_o = ready_i;
-            retry.valid = 0;
-        end
-    end
+    // Set upstream ready if downstream is ready or signal is not usable 
+    assign ready_o = ready_i | needs_retry_i;
+
+    // Filter out output if needs_retry is set or drop is set
+    assign valid_o = valid_i & !needs_retry_i;
 
 endmodule
 

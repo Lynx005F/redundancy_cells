@@ -118,10 +118,10 @@ module DTR_end # (
         // If disabled just send out input
         if (!enable_i) begin
             data_o = data_i;
-            id_o = id_i[IDSize-2:0];
+            id_o = id_i[IDSize-1:0];
         end else begin
             data_o = data_q;
-            id_o = id_q[IDSize-2:0];
+            id_o = id_q[IDSize-1:0];
         end
 
         if (data_i == data_q) data_same_in = '1;

@@ -25,9 +25,9 @@ module retry_start # (
     // For an in-order process, this can be set to 1.
     // For an out of order process, it needs to be big enough so that the out-of-orderness can never
     // rearange the elements with the same id next to each other
-    // As an estimate you can use log2(longest_pipeline) + 1
+    // As an estimate you can use log2(longest_pipeline) + 2
     // Needs to match with retry_end!
-    parameter IDSize = 1,
+    parameter IDSize = 2,
     // Amount of bits from the ID which are defined externally and should not be incremented.
     // This allows for seperating the ID spaces into multiple sections, which will behave and overwrite
     // each other indefinitely. For example, if you set IDSize=3 and ExternalIDBits=1, then you will get 
@@ -36,13 +36,16 @@ module retry_start # (
     // Set 2: 100, 101, 110, 111
     // You can use this to reduce storage space required if some operations take significantly longer in
     // the pipelines than others. E.g. use Set 1 with operations done in 1 cycle, and Set 2 with operations 
-    // that take 10 cycles. Each subset must satisfy the required ID Size of log2(longest_pipeline) + 1, 
+    // that take 10 cycles. Each subset must satisfy the required ID Size of log2(longest_pipeline) + 2, 
     // excluding the bits used to distinguish the sets.
     parameter ExternalIDBits = 0,
     // Physical width of the ID bits input so that the case of 0 is well defined
     // Must be equal or greater than the ExternalIDBits that are actually used
-    parameter ExternalIDWidth = (ExternalIDBits == 0) ? 1 : ExternalIDBits, 
-    localparam NormalIDSize = IDSize - ExternalIDBits
+    parameter ExternalIDWidth = (ExternalIDBits == 0) ? 1 : ExternalIDBits,
+    // Bits used in the ID not for parity
+    localparam UsableIDSize = IDSize - 1,
+    // Bits used in the ID not for external id or parity
+    localparam NormalIDSize = UsableIDSize - ExternalIDBits
 ) (
     input logic clk_i,
     input logic rst_ni,
@@ -62,10 +65,56 @@ module retry_start # (
     // Retry Connection
     retry_interface.start retry
 );
-    
 
     //////////////////////////////////////////////////////////////////////
-    // Register to store failed id for one cycle
+    // ID Decoding
+
+    // Split ID signal into parts
+    logic [UsableIDSize-1:0] id_noparity;
+    logic id_parity_valid;
+
+    assign id_noparity = retry.id[UsableIDSize-1:0];
+    assign id_parity_valid = !(^retry.id);
+
+    //////////////////////////////////////////////////////////////////////
+    // Keeping track of which IDs are currently floating in the unit
+
+    // Build signals for reuse
+    logic out_reg_ena;
+    logic out_tx;
+
+    assign out_reg_ena = valid_o & ready_i;
+    assign out_tx = retry.valid & retry.is_ready;
+
+    logic [2 ** UsableIDSize -1:0] in_use_d, in_use_q;
+    logic valid_for_retry;
+    logic in_use_now;
+
+    always_comb begin: gen_deduplication_next_state_comb
+        in_use_d = in_use_q;
+
+        // Any id sent into the unit is marked as sent
+        if (out_reg_ena) begin
+            in_use_d[id_o[UsableIDSize-1:0]] = 1;
+        end
+
+        // Any id that comes out the bottom of the unit with good parity 
+        // independently of retry or not is marked as recieved
+        // Overwrites previous if it happens in same cycle
+        if (out_tx & id_parity_valid) begin
+            in_use_d[id_noparity] = 0;
+        end
+    end
+
+    `FF(in_use_q, in_use_d, 0);
+
+    assign in_use_now =  out_reg_ena && (id_o[UsableIDSize-1:0] == id_noparity);
+
+    assign valid_for_retry = out_tx & id_parity_valid & retry.needs_retry & (in_use_q[id_noparity] | in_use_now);
+
+    //////////////////////////////////////////////////////////////////////
+    // Register to store for one more cycle so there are no loops
+
     logic [IDSize-1:0] failed_id_q;
     logic retry_valid_q;
     logic retry_ready, internal_ready;
@@ -74,20 +123,17 @@ module retry_start # (
     // Internal register enable for this stage
     // Upstream ready is only defined by the current register (otherwise there would be a ready loop)
     // But internal pipereg is determined also by downstream ready
-    assign retry.ready = ~retry_valid_q;
-    assign internal_ready = (~retry_valid_q | retry_ready);
-    assign retry_reg_ena = retry.valid & internal_ready;
 
-    `FFL(retry_valid_q, retry.valid, internal_ready, '0); // Valid signal only depends on ready as standard
-    `FFL(  failed_id_q, retry.id,    retry_reg_ena, '0);
+    assign internal_ready = (~retry_valid_q | retry_ready);
+    assign retry_reg_ena = valid_for_retry & internal_ready;
+
+    `FFL(retry_valid_q, valid_for_retry, internal_ready, '0);
+    `FFL(  failed_id_q, retry.id,        retry_reg_ena, '0);
 
     //////////////////////////////////////////////////////////////////////
     // ID Counter, triggers on all outputs
 
     logic [IDSize-1:0] counter_id_d, counter_id_q;
-    logic out_reg_ena;
-
-    assign out_reg_ena = valid_o & ready_i;
 
     always_comb begin: gen_id_counter
         if (out_reg_ena) begin
@@ -96,13 +142,18 @@ module retry_start # (
             // required to split the storage area into sections. In this case get it from external
             // or take it from the element to retry.
             counter_id_d[NormalIDSize-1:0] = counter_id_q[NormalIDSize-1:0] + 1;
+
+            // Add External Bits
             if (ExternalIDBits > 0) begin
-                if (retry_valid_q) begin
-                    counter_id_d[IDSize-1: NormalIDSize] = failed_id_q[IDSize-1: NormalIDSize];
+                if (valid_for_retry) begin
+                    counter_id_d[UsableIDSize-1: NormalIDSize] = retry.id[UsableIDSize-1: NormalIDSize];
                 end else begin
-                    counter_id_d[IDSize-1: NormalIDSize] = ext_id_bits_i[ExternalIDBits-1 :0];
+                    counter_id_d[UsableIDSize-1: NormalIDSize] = ext_id_bits_i[ExternalIDBits-1 :0];
                 end
             end
+
+            // Add parity bit
+            counter_id_d[IDSize-1] = ^counter_id_d[IDSize-2: 0];
 
         end else begin
             counter_id_d = counter_id_q;
@@ -114,43 +165,45 @@ module retry_start # (
     assign id_o = counter_id_q;
 
     //////////////////////////////////////////////////////////////////////
-    // General Element storage, stores all outputs
+    // Store all output data
 
-    logic [2 ** IDSize -1:0][$bits(DataType)-1:0] data_storage_d, data_storage_q;
+    logic [2 ** UsableIDSize -1:0][$bits(DataType)-1:0] data_storage_d, data_storage_q;
 
     always_comb begin: gen_failed_state
         // Keep data as is as abase
         data_storage_d = data_storage_q;
 
         if (out_reg_ena) begin
-            data_storage_d[counter_id_q] = data_o;
+            data_storage_d[counter_id_q[UsableIDSize-1:0]] = data_o;
         end
     end
 
     `FF(data_storage_q, data_storage_d, 0);
 
     //////////////////////////////////////////////////////////////////////
-    // Switch between retry and non-retry output
+    // Handshake injection
 
     logic retry_switch;
 
     // We need another FF here so we surely store if we need to switch
     // until the previous data is gone - which is different from storing
     // the retry element.
-    `FFL(retry_switch, retry.valid, out_reg_ena, 0);
+
+    `FFL(retry_switch, retry_valid_q & !retry_ready, valid_o & ready_i, 0);
 
     always_comb begin
         if (retry_switch) begin
             ready_o = '0;
             valid_o = '1;
             retry_ready = ready_i;
-            data_o = data_storage_q[failed_id_q];
+            data_o = data_storage_q[failed_id_q[UsableIDSize-1:0]];
         end else begin
             ready_o = ready_i;
             retry_ready = '0;
             valid_o = valid_i;
             data_o = data_i;
         end
+
     end
 
 endmodule

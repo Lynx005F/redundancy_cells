@@ -7,7 +7,7 @@ module tb_dtr_retry_lock #(
     parameter int OpgroupWidth = $clog2(NumOpgroups),
     parameter int IDSize = 9,
     parameter [NumOpgroups-1:0][7:0] OpgroupNumRegs = {8'd4, 8'd3, 8'd3},
-    parameter bit EarlyReadyEnable = 0,
+    parameter bit EarlyReadyEnable = 1,
     parameter bit InternalRedundancy = 0,
     // Do not modify
     localparam int REP = InternalRedundancy ? 3 : 1,
@@ -27,8 +27,7 @@ module tb_dtr_retry_lock #(
 
     typedef logic              [7:0] data_t;
     typedef logic [OpgroupWidth-1:0] operation_t;
-    typedef logic       [IDSize-1:0] id_parity_t;
-    typedef logic       [IDSize-2:0] id_t;
+    typedef logic       [IDSize-1:0] id_t;
     typedef logic [7:0] tag_t;
 
     typedef struct packed {
@@ -44,7 +43,7 @@ module tb_dtr_retry_lock #(
 
     // Typedef for stacked signal in TMR
     typedef struct packed {
-        id_parity_t          id;
+        id_t          id;
         tagged_data_t data;
     } rr_stacked_t;
 
@@ -56,22 +55,17 @@ module tb_dtr_retry_lock #(
     tagged_data_t  data_fault;
     logic valid_fault;
     logic  ready_fault;
-    id_parity_t id_fault;
+    id_t id_fault;
 
     // Signals for after TMR
     tmr_stacked_t in_tmr_stack_redundant;
     logic in_valid_redundant, in_ready_redundant;
-    id_parity_t in_id_redundant;
+    id_t in_id_redundant;
 
-    // Forward connection
-    DTR_interface #(
-        .IDSize(IDSize),
-        .InternalRedundancy(InternalRedundancy)
-    ) dtr_connection ();
 
     // Feedback connection
     retry_interface #(
-        .IDSize(IDSize-1)
+        .IDSize(IDSize)
     ) retry_connection ();
 
     // Connection between retry and DMR
@@ -87,52 +81,50 @@ module tb_dtr_retry_lock #(
 
     // DUT Instances
     retry_start #(
-        .DataType(tmr_stacked_t),
-        .IDSize(IDSize-1)
+        .DataType ( tmr_stacked_t ),
+        .IDSize   ( IDSize        )
     ) i_retry_start (
-        .clk_i(clk),
-        .rst_ni(rst_n),
+        .clk_i   ( clk              ),
+        .rst_ni  ( rst_n            ),
 
         // Upstream connection
-        .data_i(in_tmr_stack),
-        .valid_i(valid_in),
-        .ready_o(ready_in),
+        .data_i  ( in_tmr_stack     ),
+        .valid_i ( valid_in         ),
+        .ready_o ( ready_in         ),
 
         // Downstream connection
-        .data_o(data_retry2dmr),
-        .id_o(id_retry2dmr),
-        .valid_o(valid_retry2dmr),
-        .ready_i(ready_retry2dmr),
+        .data_o  ( data_retry2dmr   ),
+        .id_o    ( id_retry2dmr     ),
+        .valid_o ( valid_retry2dmr  ),
+        .ready_i ( ready_retry2dmr  ),
 
         // Retry Connection
-        .retry(retry_connection)
+        .retry   ( retry_connection )
     );
 
 
     DTR_start #(
-        .DataType(tmr_stacked_t),
-        .IDSize (IDSize),
-        .EarlyReadyEnable(EarlyReadyEnable),
-        .UseExternalId(1),
-        .InternalRedundancy(InternalRedundancy)
+        .DataType           ( tmr_stacked_t      ),
+        .IDSize             ( IDSize             ),
+        .EarlyReadyEnable   ( EarlyReadyEnable   ),
+        .UseExternalId      ( 1                  ),
+        .InternalRedundancy ( InternalRedundancy )
     ) i_DTR_start (
-        .clk_i(clk),
-        .rst_ni(rst_n),
-        .enable_i(enable),
-
-        .dtr_interface(dtr_connection),
+        .clk_i    ( clk                    ),
+        .rst_ni   ( rst_n                  ),
+        .enable_i ( enable                 ),
 
         // Upstream connection
-        .data_i(data_retry2dmr),
-        .id_i(id_retry2dmr),
-        .valid_i(valid_retry2dmr),
-        .ready_o(ready_retry2dmr),
+        .data_i   ( data_retry2dmr         ),
+        .id_i     ( id_retry2dmr           ),
+        .valid_i  ( valid_retry2dmr        ),
+        .ready_o  ( ready_retry2dmr        ),
 
         // Downstream connection
-        .data_o(in_tmr_stack_redundant),
-        .id_o   (in_id_redundant),
-        .valid_o(in_valid_redundant),
-        .ready_i(in_ready_redundant)
+        .data_o   ( in_tmr_stack_redundant ),
+        .id_o     ( in_id_redundant        ),
+        .valid_o  ( in_valid_redundant     ),
+        .ready_i  ( in_ready_redundant     )
     );
 
     // Handshake signal array for opgroup block
@@ -150,7 +142,7 @@ module tb_dtr_retry_lock #(
         tagged_data_t [0:NUM_REGS] pipe_data;
         logic         [0:NUM_REGS] pipe_valid;
         logic         [0:NUM_REGS] pipe_ready;
-        id_parity_t          [0:NUM_REGS] pipe_id;
+        id_t          [0:NUM_REGS] pipe_id;
 
         // Upstream Connection
         // Error Injection
@@ -175,7 +167,7 @@ module tb_dtr_retry_lock #(
             assign reg_ena = (pipe_ready[i] & pipe_valid[i]);  // | reg_ena_i[i];
             // Generate the pipeline registers within the stages, use enable-registers
             `FFLARN(pipe_data[i+1],      pipe_data[i],      reg_ena, tagged_data_t'('0), clk, rst_n)
-            `FFLARN(  pipe_id[i+1],      pipe_id[i],        reg_ena, id_parity_t'('0), clk, rst_n)
+            `FFLARN(  pipe_id[i+1],      pipe_id[i],        reg_ena,          id_t'('0), clk, rst_n)
         end
 
         // Downstream connection
@@ -199,22 +191,22 @@ module tb_dtr_retry_lock #(
         .AxiVldRdy          ( 1'b1               ),
         .InternalRedundancy ( InternalRedundancy )
     ) i_arbiter (
-        .clk_i(clk),
-        .rst_ni(rst_n),
-        .flush_i('0),
-        .rr_i   ('0),
-        .lock_rr_i (lock),
+        .clk_i     ( clk                     ),
+        .rst_ni    ( rst_n                   ),
+        .flush_i   ( '0                      ),
+        .rr_i      ( '0                      ),
+        .lock_rr_i ( lock                    ),
 
         // Upstream connection
-        .req_i(out_opgrp_valid),
-        .gnt_o(out_opgrp_ready),
-        .data_i(out_opgrp_rr_stack),
+        .req_i     ( out_opgrp_valid         ),
+        .gnt_o     ( out_opgrp_ready         ),
+        .data_i    ( out_opgrp_rr_stack      ),
 
         // Downstream connection
-        .gnt_i(out_tmr_ready),
-        .req_o(out_tmr_valid),
-        .data_o(out_rr_stack),
-        .idx_o(out_tmr_stack.operation)
+        .gnt_i     ( out_tmr_ready           ),
+        .req_o     ( out_tmr_valid           ),
+        .data_o    ( out_rr_stack            ),
+        .idx_o     ( out_tmr_stack.operation )
     );
 
 
@@ -233,58 +225,56 @@ module tb_dtr_retry_lock #(
     logic ready_dmr2retry;
 
     DTR_end #(
-        .DataType(tmr_stacked_t),
-        .LockTimeout(LockTimeout),
-        .IDSize (IDSize),
-        .InternalRedundancy(InternalRedundancy)
+        .DataType           ( tmr_stacked_t      ),
+        .LockTimeout        ( LockTimeout        ),
+        .IDSize             ( IDSize             ),
+        .InternalRedundancy ( InternalRedundancy )
     ) i_DTR_end (
-        .clk_i(clk),
-        .rst_ni(rst_n),
-        .enable_i(enable),
-
-        .dtr_interface(dtr_connection),
+        .clk_i            ( clk                   ),
+        .rst_ni           ( rst_n                 ),
+        .enable_i         ( enable                ),
 
         // Upstream connection
-        .data_i(out_tmr_stack),
-        .id_i   (out_tmr_id),
-        .valid_i(out_tmr_valid),
-        .ready_o(out_tmr_ready),
+        .data_i           ( out_tmr_stack         ),
+        .id_i             ( out_tmr_id            ),
+        .valid_i          ( out_tmr_valid         ),
+        .ready_o          ( out_tmr_ready         ),
 
         // Lock connection to upstream
-        .lock_o(lock),
+        .lock_o           ( lock                  ),
 
         // Downstream connection
-        .data_o(data_dmr2retry),
-        .id_o(id_dmr2retry),
-        .needs_retry_o(needs_retry_dmr2retry),
-        .valid_o(valid_dmr2retry),
-        .ready_i(ready_dmr2retry),
+        .data_o           ( data_dmr2retry        ),
+        .id_o             ( id_dmr2retry          ),
+        .needs_retry_o    ( needs_retry_dmr2retry ),
+        .valid_o          ( valid_dmr2retry       ),
+        .ready_i          ( ready_dmr2retry       ),
 
         // Flag output
-        .fault_detected_o(/*Unused*/)
+        .fault_detected_o ( /*Unused*/            )
     );
 
     retry_end #(
-        .DataType(tmr_stacked_t),
-        .IDSize(IDSize-1)
+        .DataType ( tmr_stacked_t ),
+        .IDSize   ( IDSize        )
     ) i_retry_end (
-        .clk_i(clk),
-        .rst_ni(rst_n),
+        .clk_i         ( clk                   ),
+        .rst_ni        ( rst_n                 ),
 
         // Upstream connection
-        .data_i(data_dmr2retry),
-        .id_i(id_dmr2retry),
-        .needs_retry_i(needs_retry_dmr2retry),
-        .valid_i(valid_dmr2retry),
-        .ready_o(ready_dmr2retry),
+        .data_i        ( data_dmr2retry        ),
+        .id_i          ( id_dmr2retry          ),
+        .needs_retry_i ( needs_retry_dmr2retry ),
+        .valid_i       ( valid_dmr2retry       ),
+        .ready_o       ( ready_dmr2retry       ),
 
         // Downstream connection
-        .data_o(out_stacked),
-        .valid_o(valid_out),
-        .ready_i(ready_out),
+        .data_o        ( out_stacked           ),
+        .valid_o       ( valid_out             ),
+        .ready_i       ( ready_out             ),
 
         // Retry Connection
-        .retry(retry_connection)
+        .retry         ( retry_connection      )
     );
 
     assign data_out = out_stacked.data;

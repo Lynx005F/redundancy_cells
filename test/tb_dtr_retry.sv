@@ -32,124 +32,113 @@ module tb_dtr_retry #(
     tagged_data_t data_in,  data_detectable, data_redundant,  data_fault,  data_redundant_faulty,  data_detected, data_out;
     logic valid_detectable, valid_redundant, valid_fault, valid_redundant_faulty, valid_detected;
     logic ready_detectable, ready_redundant, ready_fault, ready_redundant_faulty, ready_detected;
-    logic [IDSize-1:0] id_redundant, id_fault, id_redundant_faulty;
-    logic [IDSize-2:0] id_detectable, id_detected;
+    logic [IDSize-1:0] id_redundant, id_fault, id_redundant_faulty, id_detectable, id_detected;
     logic needs_retry_detected;
-
-    // Forward connection
-    DTR_interface #(
-        .IDSize(IDSize),
-        .InternalRedundancy(InternalRedundancy)
-    ) dtr_connection ();
 
     // Feedback connection
     retry_interface #(
-        .IDSize(IDSize-1)
+        .IDSize ( IDSize )
     ) retry_connection ();
 
     // DUT Instances
     retry_start #(
-        .DataType(tagged_data_t),
-        .IDSize(IDSize-1)
+        .DataType ( tagged_data_t ),
+        .IDSize   ( IDSize        )
     ) dut_retry_start (
-        .clk_i(clk),
-        .rst_ni(rst_n),
+        .clk_i   ( clk              ),
+        .rst_ni  ( rst_n            ),
 
         // Upstream connection
-        .data_i(data_in),
-        .valid_i(valid_in),
-        .ready_o(ready_in),
+        .data_i  ( data_in          ),
+        .valid_i ( valid_in         ),
+        .ready_o ( ready_in         ),
 
         // Downstream connection
-        .data_o(data_detectable),
-        .id_o(id_detectable),
-        .valid_o(valid_detectable),
-        .ready_i(ready_detectable),
-
+        .data_o  ( data_detectable  ),
+        .id_o    ( id_detectable    ),
+        .valid_o ( valid_detectable ),
+        .ready_i ( ready_detectable ),
+ 
         // Retry Connection
-        .retry(retry_connection)
+        .retry   ( retry_connection )
     );
 
 
     // DUT Instances
     DTR_start #(
-        .DataType(tagged_data_t),
-        .IDSize(IDSize),
-        .EarlyReadyEnable(EarlyReadyEnable),
-        .UseExternalId(1),
-        .InternalRedundancy(InternalRedundancy)
-    ) dut_DMR_start (
-        .clk_i(clk),
-        .rst_ni(rst_n),
-        .enable_i(enable),
-
-        .dtr_interface(dtr_connection),
+        .DataType           ( tagged_data_t      ),
+        .IDSize             ( IDSize             ),
+        .EarlyReadyEnable   ( EarlyReadyEnable   ),
+        .UseExternalId      ( 1                  ),
+        .InternalRedundancy ( InternalRedundancy )
+    ) dut_DTR_start (
+        .clk_i    ( clk                    ),
+        .rst_ni   ( rst_n                  ),
+        .enable_i ( enable                 ),
 
         // Upstream connection
-        .data_i(data_detectable),
-        .id_i(id_detectable),
-        .valid_i(valid_detectable),
-        .ready_o(ready_detectable),
+        .data_i   ( data_detectable        ),
+        .id_i     ( id_detectable          ),
+        .valid_i  ( valid_detectable       ),
+        .ready_o  ( ready_detectable       ),
 
         // Downstream connection
-        .data_o(data_redundant),
-        .id_o(id_redundant),
-        .valid_o(valid_redundant),
-        .ready_i(ready_redundant_faulty)
+        .data_o   ( data_redundant         ),
+        .id_o     ( id_redundant           ),
+        .valid_o  ( valid_redundant        ),
+        .ready_i  ( ready_redundant_faulty )
     );
 
     // DUT Instances
     DTR_end #(
-        .DataType(tagged_data_t),
-        .LockTimeout(LockTimeout),
-        .IDSize(IDSize),
-        .InternalRedundancy(InternalRedundancy)
-    ) dut_DMR_end (
-        .clk_i(clk),
-        .rst_ni(rst_n),
-        .enable_i(enable),
-
-        .dtr_interface(dtr_connection),
+        .DataType           ( tagged_data_t      ),
+        .LockTimeout        ( LockTimeout        ),
+        .IDSize             ( IDSize             ),
+        .InternalRedundancy ( InternalRedundancy )
+    ) dut_DTR_end (
+        .clk_i            ( clk                    ),
+        .rst_ni           ( rst_n                  ),
+        .enable_i         ( enable                 ),
 
         // Upstream connection
-        .data_i(data_redundant_faulty),
-        .id_i(id_redundant_faulty),
-        .valid_i(valid_redundant_faulty),
-        .ready_o(ready_redundant),
+        .data_i           ( data_redundant_faulty  ),
+        .id_i             ( id_redundant_faulty    ),
+        .valid_i          ( valid_redundant_faulty ),
+        .ready_o          ( ready_redundant        ),
 
         // Downstream connection
-        .data_o(data_detected),
-        .id_o(id_detected),
-        .needs_retry_o(needs_retry_detected),
-        .valid_o(valid_detected),
-        .ready_i(ready_detected),
-        .lock_o(/*Unused*/),
-
-        .fault_detected_o(/*Unused*/)
+        .data_o           ( data_detected          ),
+        .id_o             ( id_detected            ),
+        .needs_retry_o    ( needs_retry_detected   ),
+        .valid_o          ( valid_detected         ),
+        .ready_i          ( ready_detected         ),
+        .lock_o           ( /*Unused*/             ),
+  
+        .fault_detected_o ( /*Unused*/             )
     );
 
     // DUT Instances
     retry_end #(
-        .DataType(tagged_data_t),
-        .IDSize(IDSize-1)
+        .DataType ( tagged_data_t ),
+        .IDSize   ( IDSize        )
     ) dut_retry_end (
-        .clk_i(clk),
-        .rst_ni(rst_n),
+        .clk_i        ( clk                  ),
+        .rst_ni       ( rst_n                ),
 
         // Upstream connection
-        .data_i(data_detected),
-        .id_i(id_detected),
-        .needs_retry_i(needs_retry_detected),
-        .valid_i(valid_detected),
-        .ready_o(ready_detected),
+        .data_i       ( data_detected        ),
+        .id_i         ( id_detected          ),
+        .needs_retry_i( needs_retry_detected ),
+        .valid_i      ( valid_detected       ),
+        .ready_o      ( ready_detected       ),
 
         // Downstream connection
-        .data_o(data_out),
-        .valid_o(valid_out),
-        .ready_i(ready_out),
+        .data_o       ( data_out             ),
+        .valid_o      ( valid_out            ),
+        .ready_i      ( ready_out            ),
 
         // Retry Connection
-        .retry(retry_connection)
+        .retry        ( retry_connection     )
     );
 
     //////////////////////////////////////////////////////////////////////////////////7
@@ -239,8 +228,8 @@ module tb_dtr_retry #(
     // Fault Injection
     //////////////////////////////////////////////////////////////////////////////////7
 
-    longint unsigned min_fault_delay = 12 * 4;
-    longint unsigned max_fault_delay = 12 * 4 + 20;
+    longint unsigned min_fault_delay = 12 * 5;
+    longint unsigned max_fault_delay = 12 * 5 + 20;
 
     // Signals to show what faults are going on
     enum {NONE, DATA_FAULT, VALID_FAULT, READY_FAULT, ID_FAULT} fault_type, fault_current;
