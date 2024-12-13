@@ -19,11 +19,10 @@
 // to recalculate in hardware, or invoke some recalculation or error on the software side.
 //
 // In order to propperly function:
-// - DTR_interface of DTR_start needs to be connected to DTR_interface of DTR_end.
 // - id_o of DTR_start needs to be passed paralelly to the combinatorial logic, using the same handshake
 //   and arrive at id_i of DTR_end.
 // - All operation pairs in contact with each other have a unique ID.
-// - The module can only be enabled / disabled when the combinatorially process holds no valid data.
+// - The module can only be enabled / disabled when the combinatorial process holds no valid data.
 //
 // This module can deal with out-of-order combinatorial processes under the conditions that
 // the two operations belonging together are not separated.
@@ -43,7 +42,7 @@ module DTR_start # (
     // For an out of order process, it needs to be big enough so that the
     // out-of-orderness can never  rearange the elements with the same id
     // next to each other and needs an extra bit for error detection.
-    // As an estimate you can use log2(longest_pipeline) + 2.
+    // As an estimate you can use log2(longest_pipeline) + 1.
     // Needs to match with DTR_end!
     parameter int unsigned IDSize = 1,
     // If you want Ready to be set as early as possible, and store elements
@@ -65,12 +64,9 @@ module DTR_start # (
     input logic rst_ni,
     input logic enable_i,
 
-    // Direct connection
-    DTR_interface.sender dtr_interface,
-
     // Upstream connection
     input DataType data_i,
-    input logic [IDSize-2:0] id_i,
+    input logic [IDSize-1:0] id_i,
     input logic valid_i,
     output logic ready_o,
 
@@ -82,18 +78,15 @@ module DTR_start # (
 );
 
     // ID Generation Logic
-    logic [REP-1:0][IDSize-1:0] next_id_ov;
+    logic [REP-1:0][IDSize-1:0] next_id_v;
     logic [REP-1:0][IDSize-1:0] id_b, id_v, id_d, id_q;
 
     for (genvar r = 0; r < REP; r++) begin: gen_id
         if (UseExternalId == 1) begin
-            // Add a parity bit
-            assign next_id_ov[r][IDSize-2:0] = id_i;
-            assign next_id_ov[r][IDSize-1] = ^id_i;
+            assign next_id_v[r] = id_i;
         end else begin
-            // Increment and add parity bit
-            assign next_id_ov[r][IDSize-2:0] = id_q[r][IDSize-2:0] + 1;
-            assign next_id_ov[r][IDSize-1] = ^next_id_ov[r][IDSize-2:0];
+            // Simple looping ID
+            assign next_id_v[r] = id_q[r] + 1;
         end
     end
 
@@ -123,7 +116,7 @@ module DTR_start # (
                     STORE_AND_SEND:
                         if (valid_i) begin
                             data_v[r] = data_i;
-                            id_v[r] = next_id_ov[r];
+                            id_v[r] = next_id_v[r];
 
                             if (ready_i) begin
                                 if (enable_i) begin
@@ -175,21 +168,16 @@ module DTR_start # (
                     STORE_AND_SEND: begin
                         valid_ov[r] = valid_i;
                         ready_ov[r] = 1;
-                        dtr_interface.sent[r] = valid_i & ready_i & enable_i;
                     end
                     SEND: begin
                         valid_ov[r] = '1;
                         ready_ov[r] = '0;
-                        dtr_interface.sent[r] = ready_i & enable_i;
                     end
                     REPLICATE: begin
                         valid_ov[r] = '1;
                         ready_ov[r] = '0;
-                        dtr_interface.sent[r] = '0;
                     end
                 endcase
-
-                dtr_interface.id  [r] = id_d[r];
             end
         end
 
@@ -220,7 +208,7 @@ module DTR_start # (
                 case (state_q[r])
                     SEND:
                         if (valid_i) begin
-                            id_v[r] = next_id_ov[r];
+                            id_v[r] = next_id_v[r];
 
                             if (ready_i) begin
                                 if (enable_i) begin
@@ -268,19 +256,14 @@ module DTR_start # (
                 case (state_q[r])
                     SEND: begin
                         ready_ov[r] = ~enable_i & ready_i;
-                        dtr_interface.sent[r] = valid_i & enable_i & ready_i;
                     end
                     SEND_NO_INCREMENT: begin
                         ready_ov[r] = ~enable_i & ready_i;
-                        dtr_interface.sent[r] = enable_i & ready_i;
                     end
                     SEND_AND_CONSUME: begin
                         ready_ov[r] = enable_i & ready_i;
-                        dtr_interface.sent[r] = '0;
                     end
                 endcase
-
-                dtr_interface.id  [r] = id_d[r];
             end
         end
 

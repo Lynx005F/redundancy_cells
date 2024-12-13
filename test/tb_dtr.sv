@@ -23,67 +23,57 @@ module tb_dtr #(
     data_t data_in, data_redundant,  data_fault,  data_redundant_faulty,  data_out;
     logic valid_redundant, valid_fault, valid_redundant_faulty;
     logic ready_redundant, ready_fault, ready_redundant_faulty;
-    logic [IDSize-1:0] id_redundant, id_fault, id_redundant_faulty;
-
-    // Forward connection
-    DTR_interface #(
-        .IDSize(IDSize),
-        .InternalRedundancy(InternalRedundancy)
-    ) dtr_interface ();
+    logic [IDSize-1:0] id_redundant, id_fault, id_redundant_faulty, id_out;
 
     // DUT Instances
     DTR_start #(
-        .DataType(data_t),
-        .IDSize(IDSize),
-        .UseExternalId(0),
-        .InternalRedundancy(InternalRedundancy)
+        .DataType           ( data_t             ),
+        .IDSize             ( IDSize             ),
+        .UseExternalId      ( 0                  ),
+        .InternalRedundancy ( InternalRedundancy )
     ) dut_start (
-        .clk_i(clk),
-        .rst_ni(rst_n),
-        .enable_i(enable),
-
-        .dtr_interface(dtr_interface),
+        .clk_i    (clk                     ),
+        .rst_ni   (rst_n                   ),
+        .enable_i (enable                  ),
 
         // Upstream connection
-        .data_i(data_in),
-        .id_i('0),
-        .valid_i(valid_in),
-        .ready_o(ready_in),
+        .data_i   ( data_in                ),
+        .id_i     ( '0                     ),
+        .valid_i  ( valid_in               ),
+        .ready_o  ( ready_in               ),
 
         // Downstream connection
-        .data_o(data_redundant),
-        .id_o(id_redundant),
-        .valid_o(valid_redundant),
-        .ready_i(ready_redundant_faulty)
+        .data_o   ( data_redundant         ),
+        .id_o     ( id_redundant           ),
+        .valid_o  ( valid_redundant        ),
+        .ready_i  ( ready_redundant_faulty )
     );
 
     DTR_end #(
-        .DataType(data_t),
-        .LockTimeout(LockTimeout),
-        .IDSize(IDSize),
-        .InternalRedundancy(InternalRedundancy)
+        .DataType           ( data_t             ),
+        .LockTimeout        ( LockTimeout        ),
+        .IDSize             ( IDSize             ),
+        .InternalRedundancy ( InternalRedundancy )
     ) dut_end (
-        .clk_i(clk),
-        .rst_ni(rst_n),
-        .enable_i(enable),
-
-        .dtr_interface(dtr_interface),
+        .clk_i            ( clk                    ),
+        .rst_ni           ( rst_n                  ),
+        .enable_i         ( enable                 ),
 
         // Upstream connection
-        .data_i(data_redundant_faulty),
-        .id_i(id_redundant_faulty),
-        .valid_i(valid_redundant_faulty),
-        .ready_o(ready_redundant),
-        .lock_o(/*Unused*/),
+        .data_i           ( data_redundant_faulty  ),
+        .id_i             ( id_redundant_faulty    ),
+        .valid_i          ( valid_redundant_faulty ),
+        .ready_o          ( ready_redundant        ),
+        .lock_o           ( /*Unused*/             ),
 
         // Downstream connection
-        .data_o(data_out),
-        .id_o(/*Unused*/),
-        .needs_retry_o(needs_retry_out),
-        .valid_o(valid_out),
-        .ready_i(ready_out),
+        .data_o           ( data_out               ),
+        .id_o             ( id_out                 ),
+        .needs_retry_o    ( needs_retry_out        ),
+        .valid_o          ( valid_out              ),
+        .ready_i          ( ready_out              ),
 
-        .fault_detected_o(/*Unused*/)
+        .fault_detected_o ( /*Unused*/             )
     );
 
     //////////////////////////////////////////////////////////////////////////////////7
@@ -105,10 +95,11 @@ module tb_dtr #(
     // Data Output
     //////////////////////////////////////////////////////////////////////////////////7
     data_t data_golden, data_actual;
+    logic [IDSize-1:0] id_actual, id_old;
     logic needs_retry_actual;
     logic error; // Helper signal so one can quickly scroll to errors in questa
     longint unsigned error_cnt = 0;
-    int fault_budget = 0;
+    int fault_budget = 2;
 
     // Progress reporting
     task reset_metrics();
@@ -123,31 +114,40 @@ module tb_dtr #(
         $timeformat(-9, 0, " ns", 20);
         forever begin
             output_handshake_start();
+            id_old = id_actual;
             data_actual = data_out;
+            id_actual = id_out;
             needs_retry_actual = needs_retry_out;
             if (golden_queue.size() > 0) begin
-                data_golden = golden_queue.pop_front();
-
                 if (needs_retry_actual) begin
-                    fault_budget -= 1;
+
+                    if (fault_budget > 1) begin
+                        data_golden = golden_queue.pop_front();
+                    end else if (fault_budget == 1 && id_actual == id_old + 1) begin
+                        data_golden = golden_queue.pop_front();
+                    end
+
+                    fault_budget = 1;
+
                     if (fault_budget < 0) begin
                         $error("[T=%t] More faults detected than injected!", $time);
                         error = 1;
                         error_cnt += 1;
                     end
                 end else begin
+                    data_golden = golden_queue.pop_front();
                     if (data_actual != data_golden) begin
                         $error("[T=%t] Mismatch: Golden: %h, Actual: %h", $time, data_golden, data_actual);
                         error = 1;
                         error_cnt += 1;
                     end else begin
-                        fault_budget = 1;
+                        fault_budget = 2;
                         error = 0;
                     end
                 end
 
             end else begin
-                $display("[T=%t] Data %h Output when nothing was in golden queue", $time, data_actual);
+                $error("[T=%t] Data %h Output when nothing was in golden queue", $time, data_actual);
                 error = 1;
                 error_cnt += 1;
             end

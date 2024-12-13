@@ -1,5 +1,5 @@
 // Author: Maurus Item <itemm@student.ethz.ch>, ETH Zurich
-// Date: 25.04.2024
+// Date: 12.0412.2024
 // Description: DTR is a pair of modules that can be used to
 // detect faults in any (pipelined) combinatorial process. This is
 // done by repeating each input twice and comparing the outputs.
@@ -10,20 +10,22 @@
 // - A single fault in the accompanying ID.
 //
 // In case a fault occurs and the result needs to be recalculated, the needs_retry_o signal
-// is asserted for one cycle and the ID that needs to be tried again is given.
+// is asserted and the ID that needs to be tried again is given.
+// Note that a retry for a specific ID might be sent multiple times e.g. if elements are seperated.
+// The retry mechanism needs to weed out extra retries.
+//
 // Not all faults nessesarily need a retry, in case you just want to know if
-// faults are happening you can use fault_detected_o for it.
+// faults are happening for statistics reasons you can use fault_detected_o for it.
 //
 // This needs_retry_o signal should be used to trigger some kind of mitigating action:
 // For example, one could use the "retry" modules or "retry_inorder" modules
 // to recalculate in hardware, or invoke some recalculation or error on the software side.
 //
 // In order to propperly function:
-// - DTR_interface of DTR_start needs to be connected to DTR_interface of DTR_end.
 // - id_o of DTR_start needs to be passed paralelly to the combinatorial logic, using the same handshake
 //   and arrive at id_i of DTR_end.
 // - All operation pairs in contact with each other have a unique ID.
-// - The module can only be enabled / disabled when the combinatorially process holds no valid data.
+// - The module can only be enabled / disabled when the combinatorial process holds no valid data.
 //
 // This module can deal with out-of-order combinatorial processes under the conditions that
 // the two operations belonging together are not separated.
@@ -64,9 +66,6 @@ module DTR_end # (
     input logic rst_ni,
     input logic enable_i,
 
-    // Direct connection
-    DTR_interface.reciever dtr_interface,
-
     // Upstream connection
     input DataType data_i,
     input logic [IDSize-1:0] id_i,
@@ -78,7 +77,7 @@ module DTR_end # (
 
     // Downstream connection
     output DataType data_o,
-    output logic [IDSize-2:0] id_o,
+    output logic [IDSize-1:0] id_o,
     output logic needs_retry_o,
     output logic valid_o,
     input logic ready_i,
@@ -87,11 +86,9 @@ module DTR_end # (
     output logic fault_detected_o
 );
 
-    // Redundant Output signals
+    // Reverse Signals
     logic [REP-1:0] ready_ov;
-    logic [REP-1:0] valid_ov;
-    logic [REP-1:0] needs_retry_ov;
-    logic [REP-1:0] fault_detected_ov;
+    `VOTEX1(REP, ready_ov, ready_o);
 
     /////////////////////////////////////////////////////////////////////////////////
     // Storage of incomming results and generating good output data
@@ -131,12 +128,11 @@ module DTR_end # (
         if (id_i == id_q)  id_same_in = '1;
     end
 
-
     /////////////////////////////////////////////////////////////////////////////////
     // Storage of same / not same for one extra cycle
 
-    `FFL(data_same_q, data_same_in, load_enable, 1'b1);
-    `FFL(id_same_q, id_same_in,  load_enable, 1'b1);
+    `FFL(data_same_q, data_same_in, load_enable, 1'b0);
+    `FFL(id_same_q, id_same_in,  load_enable, 1'b0);
 
     // Output (merged) signal assigment
     assign data_same = {data_same_q, data_same_in};
@@ -149,25 +145,26 @@ module DTR_end # (
     // Logic to find out what we should do with our data based on same / not same
 
     logic [REP-1:0] new_element_arrived_v;
-    logic [REP-1:0] data_usable_v;
+    logic [REP-1:0] needs_retry_ov;
 
     // Flag Combinatorial Logic
     for (genvar r = 0; r < REP; r++) begin: gen_data_flags
         always_comb begin: gen_data_flags_comb
             // Some new element just showed up and we need to send data outwards again.
             new_element_arrived_v[r] = (id_same == 2'b01) || (id_same == 2'b00);
-
-            // Data has at least two new things that are the same
-            data_usable_v[r] = data_same[0];
+            needs_retry_ov[r] = !full_same[0] & enable_i;
         end
     end
+
+    `VOTEX1(REP, needs_retry_ov, needs_retry_o);
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////
     // State machine to figure out handshake
 
     typedef enum logic [1:0] {BASE, WAIT_FOR_READY} state_t;
     state_t [REP-1:0] state_b, state_v, state_d, state_q;
-    logic [REP-1:0] valid_internal_v, lock_internal_v;
+    logic [REP-1:0] lock_internal_v;
+    logic [REP-1:0] valid_ov;
 
     // Special State Description:
     // Wait for Ready: We got some data that is usable, but downstream can't use it yet
@@ -184,12 +181,8 @@ module DTR_end # (
 
             case (state_q[r])
                 BASE:
-                    if (valid_i) begin
-                        if (new_element_arrived_v[r]) begin
-                            if (!ready_i) begin
-                                state_v[r] = WAIT_FOR_READY;
-                            end
-                        end
+                    if (valid_i && new_element_arrived_v[r] && !ready_i) begin
+                        state_v[r] = WAIT_FOR_READY;
                     end
                 WAIT_FOR_READY:
                     if (ready_i) begin
@@ -215,8 +208,8 @@ module DTR_end # (
         always_comb begin: gen_output_comb
             if (enable_i) begin
                 case (state_q[r])
-                    BASE:           valid_internal_v[r] = valid_i & new_element_arrived_v[r];
-                    WAIT_FOR_READY: valid_internal_v[r] = valid_i;
+                    BASE:           valid_ov[r] = valid_i & new_element_arrived_v[r];
+                    WAIT_FOR_READY: valid_ov[r] = valid_i;
                 endcase
 
                 case (state_q[r])
@@ -229,12 +222,14 @@ module DTR_end # (
                     WAIT_FOR_READY: ready_ov[r] = ready_i;
                 endcase
             end else begin
-                valid_internal_v[r] = valid_i;
+                valid_ov[r] = valid_i;
                 lock_internal_v[r] = 0;
                 ready_ov[r] = ready_i;
             end
         end
     end
+
+    `VOTEX1(REP, valid_ov, valid_o);
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////
     // State machine to lock / unlock Arbitrator with Watchdog timer
@@ -283,72 +278,6 @@ module DTR_end # (
     `FF(counter_q, counter_d, counter_b);
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////
-    // Output deduplication based on ID and ID Faults
-
-    // Split ID signal into parts
-    logic id_q_fault;
-    logic [IDSize-2:0] id_q_noparity;
-    logic [REP-1:0][IDSize-2:0] interface_id_noparity;
-
-    assign id_q_fault = ^id_q;
-    assign id_q_noparity = id_q[IDSize-2:0];
-
-    for (genvar r = 0; r < REP; r++) begin: gen_interface_id_noparity
-        assign interface_id_noparity[r] = dtr_interface.id[r][IDSize-2:0];
-    end
-
-    logic [REP-1:0][2 ** (IDSize-1)-1:0] recently_seen_b, recently_seen_v, recently_seen_d, recently_seen_q;
-
-    for (genvar r = 0; r < REP; r++) begin: gen_deduplication_next_state
-        always_comb begin: gen_deduplication_next_state_comb
-            recently_seen_v[r] = recently_seen_q[r];
-
-            if (dtr_interface.sent[r]) begin
-                recently_seen_v[r][interface_id_noparity[r]] = 0;
-            end
-
-            if (valid_internal_v[r] & ready_i & !id_q_fault) begin
-                recently_seen_v[r][id_q_noparity] = 1;
-            end
-        end
-    end
-
-    // State Voting Logic
-    `VOTEXX(REP, recently_seen_v, recently_seen_d);
-
-    // Default state
-    for (genvar r = 0; r < REP; r++) begin: gen_deduplication_default_state
-        assign recently_seen_b[r] = ~'0; // All 1s!
-    end
-
-    // State Storage
-    `FF(recently_seen_q, recently_seen_d, recently_seen_b);
-
-    for (genvar r = 0; r < REP; r++) begin: gen_deduplication_output
-        always_comb begin: gen_deduplication_output_comb
-            if (enable_i) begin
-                // If parity is no good we never send out anything (wait for 2nd element)
-                if (id_q_fault) begin
-                    valid_ov[r] = 0;
-                // If we have an match from the interface directly we can send output
-                end else if (dtr_interface.sent[r] && id_q_noparity == interface_id_noparity[r]) begin
-                    valid_ov[r] = valid_internal_v[r];
-                // Otherwise check if we have recently seen this id
-                // - if we did do not send output again as it would be duplicate
-                end else if (recently_seen_q[r][id_q_noparity]) begin
-                    valid_ov[r] = 0;
-                end else begin
-                    valid_ov[r] = valid_internal_v[r];
-                end
-                needs_retry_ov[r] = id_same[0] & !data_usable_v[r];
-            end else begin
-                valid_ov[r] = valid_internal_v[r];
-                needs_retry_ov[r] = 0;
-            end
-        end
-    end
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////
     // Build error flag
 
     // Since we can sometimes output data that only showed up for one cycle e.g. when another id was faulty
@@ -358,9 +287,10 @@ module DTR_end # (
     // So if that is not the case we had a fault.
 
     logic [REP-1:0] fault_detected_b, fault_detected_d, fault_detected_q;
+    logic [REP-1:0] fault_detected_ov;
 
     for (genvar r = 0; r < REP; r++) begin: gen_flag_next_state
-        assign fault_detected_d[r] = ~|full_same[1:0] & valid_i;;
+        assign fault_detected_d[r] = ~|full_same[1:0] & valid_i;
     end
 
     // Default state
@@ -374,12 +304,6 @@ module DTR_end # (
         assign fault_detected_ov[r] = fault_detected_d[r] & !fault_detected_q[r];
     end
 
-    ///////////////////////////////////////////////////////////////////////////////////////////////////
-    // Output Voting
-
-    `VOTEX1(REP, ready_ov, ready_o);
-    `VOTEX1(REP, valid_ov, valid_o);
-    `VOTEX1(REP, needs_retry_ov, needs_retry_o);
     `VOTEX1(REP, fault_detected_ov, fault_detected_o);
 
 endmodule
