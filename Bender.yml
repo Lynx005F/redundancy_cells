@@ -54,8 +54,6 @@ sources:
   - rtl/pulpissimo_tcls/tcls_manager_reg_top.sv
   - rtl/time_redundancy/redundancy_controller.sv
   - rtl/time_redundancy/retry_end.sv
-  - rtl/time_redundancy/retry_inorder_start.sv
-  - rtl/time_redundancy/retry_inorder_end.sv
   - rtl/time_redundancy/retry_start.sv
   - rtl/time_redundancy/TTR_end.sv
   - rtl/time_redundancy/TTR_start.sv
@@ -134,7 +132,6 @@ sources:
       - test/tb_ttr_lock.sv
       - test/tb_redundancy_controller.sv
       - test/tb_retry.sv
-      - test/tb_retry_inorder.sv
       - test/tb_rr_arb_tree_lock.sv
       - test/tb_voter_macros.sv
       
