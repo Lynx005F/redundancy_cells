@@ -112,6 +112,9 @@ module retry_start # (
 
     assign retry_valid = out_tx & id_parity_valid & retry.needs_retry & (in_use_q[id_noparity] | in_use_now);
 
+    // Send to ned when a result can be sent out
+    assign retry.fine = id_parity_valid & (in_use_q[id_noparity] | in_use_now) & !retry.needs_retry;
+
     //////////////////////////////////////////////////////////////////////
     // Registers to store for one more cycle so there are no loops
 
