@@ -11,18 +11,21 @@ interface retry_interface #(
     logic valid;
     logic needs_retry;
     logic is_ready; // Parallel signal to other
+    logic fine;
 
     modport start (
       input id,
       input valid,
       input needs_retry,
-      input is_ready
+      input is_ready,
+      output fine
     );
 
     modport ende (
       output id,
       output valid,
       output needs_retry,
-      output is_ready
+      output is_ready,
+      input fine
     );
 endinterface

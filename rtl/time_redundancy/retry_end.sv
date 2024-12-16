@@ -58,8 +58,8 @@ module retry_end # (
     // Set upstream ready if downstream is ready or signal is not usable 
     assign ready_o = ready_i | needs_retry_i;
 
-    // Filter out output if needs_retry is set or drop is set
-    assign valid_o = valid_i & !needs_retry_i;
+    // Filter out output if result is not fine
+    assign valid_o = valid_i & !needs_retry_i & retry.fine;
 
 endmodule
 

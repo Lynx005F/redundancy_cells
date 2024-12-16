@@ -70,11 +70,13 @@ module retry_start # (
     // ID Decoding
 
     // Split ID signal into parts
-    logic [UsableIDSize-1:0] id_noparity;
+    logic [UsableIDSize-1:0] id_noparity, id_o_noparity;
     logic id_parity_valid;
 
     assign id_noparity = retry.id[UsableIDSize-1:0];
     assign id_parity_valid = !(^retry.id);
+
+    assign id_o_noparity = id_o[UsableIDSize-1:0];
 
     //////////////////////////////////////////////////////////////////////
     // Keeping track of which IDs are currently floating in the unit
@@ -89,13 +91,13 @@ module retry_start # (
     logic [2 ** UsableIDSize -1:0] in_use_d, in_use_q;
     logic retry_valid;
     logic in_use_now;
-
+ 
     always_comb begin: gen_deduplication_next_state_comb
         in_use_d = in_use_q;
 
         // Any id sent into the unit is marked as sent
         if (out_reg_ena) begin
-            in_use_d[id_o[UsableIDSize-1:0]] = 1;
+            in_use_d[id_o_noparity] = 1;
         end
 
         // Any id that comes out the bottom of the unit with good parity 
@@ -108,28 +110,32 @@ module retry_start # (
 
     `FF(in_use_q, in_use_d, 0);
 
-    assign in_use_now =  out_reg_ena && (id_o[UsableIDSize-1:0] == id_noparity);
+    assign in_use_now = (id_o_noparity == id_noparity);
 
     assign retry_valid = out_tx & id_parity_valid & retry.needs_retry & (in_use_q[id_noparity] | in_use_now);
+
+    // Send to ned when a result can be sent out
+    assign retry.fine = id_parity_valid & (in_use_q[id_noparity] | in_use_now);
 
     //////////////////////////////////////////////////////////////////////
     // Registers to store for one more cycle so there are no loops
 
     logic [IDSize-1:0] failed_id_q, failed_id_immediate;
     logic retry_valid_q, retry_valid_immediate;
-    logic mid_ready, upstream_ready;
+    logic reg2_ready, reg_ready;
     logic reg_ena;
 
     // Internal register enable for this stage
     // Upstream ready is only defined by the current register (otherwise there would be a ready loop)
     // But internal pipereg is determined also by downstream ready
 
-    assign upstream_ready = (~retry_valid_q | mid_ready);  // Register is ready if empty or downstream ready
-    assign reg_ena = retry_valid & upstream_ready;
+    assign reg_ready = (~retry_valid_q | reg2_ready);  // Register is ready if empty or downstream ready
+    assign reg_ena = retry_valid & reg_ready;
 
-    `FFL(retry_valid_q, retry_valid & !mid_ready, upstream_ready, '0);
+    `FFL(retry_valid_q, retry_valid & !reg2_ready, reg_ready, '0);
     `FFL(  failed_id_q, retry.id,        reg_ena, '0);
 
+    // Bypass reg if empty
     assign failed_id_immediate = retry_valid_q ? failed_id_q : retry.id; // Use data in reg if valid
     assign retry_valid_immediate = retry_valid | retry_valid_q;
 
@@ -139,18 +145,18 @@ module retry_start # (
     //  we can not stall upstream since this would cause a cycle and terminal stall.
     //  Instead we just hang on to one more id)
 
-    logic [IDSize-1:0] failed_id_q2, failed_id_immediate2;
+    logic [IDSize-1:0] failed_id_q2;
     logic retry_valid_q2, retry_valid_immediate2;
     logic retry_ready;
-    logic reg_ena2;
+    logic reg2_ena;
     
-    assign mid_ready = (~retry_valid_q2 | retry_ready); // Register is ready if empty or downstream ready
-    assign reg_ena2 = retry_valid_immediate & mid_ready;
+    assign reg2_ready = (~retry_valid_q2 | retry_ready); // Register is ready if empty or downstream ready
+    assign reg2_ena = retry_valid_immediate & reg2_ready;
 
-    `FFL(retry_valid_q2, retry_valid_immediate, mid_ready, '0);
-    `FFL(  failed_id_q2, failed_id_immediate,   reg_ena2, '0);
+    `FFL(retry_valid_q2, retry_valid_immediate, reg2_ready, '0);
+    `FFL(  failed_id_q2, failed_id_immediate,   reg2_ena, '0);
 
-    assign failed_id_immediate2 = retry_valid_q2 ? failed_id_q2 : failed_id_immediate; // Use data in reg if valid
+    // Bypass reg if empty
     assign retry_valid_immediate2 = retry_valid_immediate | retry_valid_q2;
 
     //////////////////////////////////////////////////////////////////////
@@ -164,35 +170,16 @@ module retry_start # (
 
     `FFL(retry_switch, retry_valid_immediate2 & !retry_ready, out_reg_ena, 0);
 
-    // Signal to pre-switch thing before reg_enable
-    logic retry_imminent;
-    assign retry_imminent = retry_valid_immediate2 & !retry_switch; 
-
     //////////////////////////////////////////////////////////////////////
     // ID Counter, triggers on all outputs
 
-    logic [IDSize-1:0] counter_id_d, counter_id_q;
+    logic [NormalIDSize-1:0] counter_id_d, counter_id_q;
 
     always_comb begin: gen_id_counter
         if (out_reg_ena) begin
-
             // The topmost ID bits are not incremented but are controlled externally if 
-            // required to split the storage area into sections. In this case get it from external
-            // or take it from the element to retry.
-            counter_id_d[NormalIDSize-1:0] = counter_id_q[NormalIDSize-1:0] + 1;
-
-            // Add External Bits
-            if (ExternalIDBits > 0) begin
-                if (retry_imminent) begin
-                    counter_id_d[UsableIDSize-1: NormalIDSize] = failed_id_immediate2[UsableIDSize-1: NormalIDSize];
-                end else begin
-                    counter_id_d[UsableIDSize-1: NormalIDSize] = ext_id_bits_i[ExternalIDBits-1 :0];
-                end
-            end
-
-            // Add parity bit
-            counter_id_d[IDSize-1] = ^counter_id_d[IDSize-2: 0];
-
+            // required to split the storage area into sections.
+            counter_id_d = counter_id_q + 1;
         end else begin
             counter_id_d = counter_id_q;
         end
@@ -200,7 +187,21 @@ module retry_start # (
 
     `FF(counter_id_q, counter_id_d, 0);
 
-    assign id_o = counter_id_q;
+    always_comb begin: gen_id_output
+        id_o[NormalIDSize-1:0] = counter_id_q;
+
+        // Add External Bits
+        if (ExternalIDBits > 0) begin
+            if (retry_switch) begin
+                id_o[UsableIDSize-1: NormalIDSize] = failed_id_q2[UsableIDSize-1: NormalIDSize];
+            end else begin
+                id_o[UsableIDSize-1: NormalIDSize] = ext_id_bits_i[ExternalIDBits-1 :0];
+            end
+        end
+
+        // Add parity bit
+        id_o[IDSize-1] = ^id_o[IDSize-2: 0];
+    end
 
     //////////////////////////////////////////////////////////////////////
     // Store all output data
@@ -212,7 +213,7 @@ module retry_start # (
         data_storage_d = data_storage_q;
 
         if (out_reg_ena) begin
-            data_storage_d[counter_id_q[UsableIDSize-1:0]] = data_o;
+            data_storage_d[id_o[UsableIDSize-1:0]] = data_o;
         end
     end
 
