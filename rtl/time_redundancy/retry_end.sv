@@ -55,8 +55,9 @@ module retry_end # (
     // No data modification ever, just handshake stuff
     assign data_o = data_i;
 
-    // Set upstream ready if downstream is ready or signal is not usable 
-    assign ready_o = ready_i | needs_retry_i;
+    // Set upstream ready if downstream is ready
+    // (We could also set it on needs_retry_i but that can cause loops / long crit path)
+    assign ready_o = ready_i;
 
     // Filter out output if result is not fine
     assign valid_o = valid_i & !needs_retry_i & retry.fine;
