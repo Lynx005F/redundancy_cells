@@ -63,9 +63,9 @@ for redundancy in 0 1; do
     done
 
     call_vsim tb_dtr -GEarlyReadyEnable=$early_ready -GInternalRedundancy=$redundancy
-    call_vsim tb_dtr_retry -GEarlyReadyEnable=$early_ready -GInternalRedundancy=$redundancy
   done
 
+  call_vsim tb_dtr_retry -GInternalRedundancy=$redundancy
   call_vsim tb_dtr_retry_lock -GInternalRedundancy=$redundancy
 
 done

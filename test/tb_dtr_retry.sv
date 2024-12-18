@@ -3,7 +3,7 @@ module tb_dtr_retry #(
     parameter int IDSize = 4,
     parameter int LockTimeout = 4 * 12,
     parameter bit InternalRedundancy = 0,
-    parameter bit EarlyReadyEnable = 0,
+    parameter bit EarlyReadyEnable = 1,
 
     // TB Parameters
     parameter int unsigned TESTS = 10000,

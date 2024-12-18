@@ -110,7 +110,7 @@ module retry_start # (
 
     `FF(in_use_q, in_use_d, 0);
 
-    assign in_use_now = (id_o_noparity == id_noparity);
+    assign in_use_now = (id_o_noparity == id_noparity) & out_reg_ena;
 
     assign retry_valid = out_tx & id_parity_valid & retry.needs_retry & (in_use_q[id_noparity] | in_use_now);
 
